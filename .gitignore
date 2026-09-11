@@ -1,11 +1,11 @@
-# Generated benchmark artifacts
+# Generated benchmark artifacts and temporary diagnostic output
 results/
 run-data/
 .run-data/
 logs/
 *.log
 
-# Local databases (the application does not currently require one)
+# Local application databases
 *.db
 *.db-*
 *.sqlite
@@ -15,6 +15,7 @@ logs/
 
 # Dependencies and coverage
 node_modules/
+.venv/
 coverage/
 frontend/dist/
 backend/dist/

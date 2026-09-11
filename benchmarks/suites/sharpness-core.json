@@ -1,0 +1,10 @@
+{
+  "id": "sharpness-core",
+  "version": 1,
+  "title": "Core agent sharpness regression suite",
+  "scenarioIds": [
+    "homepage-active-navigation",
+    "centralize-account-list-policy",
+    "row-local-table-mutations"
+  ]
+}

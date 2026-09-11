@@ -28,9 +28,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run validate:skills
+      - run: npm run validate:docs
+      - run: npm run tooling:check
       - run: npm run backend:check
       - run: npm test
       - run: npm run web:check
       - run: npm run test:web
       - run: npm run backend:build
       - run: npm run web:build
+      - run: npm run docker:config
+      - run: npm run docker:build

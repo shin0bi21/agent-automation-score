@@ -1,0 +1,4 @@
+interface:
+  display_name: "Map Changes"
+  short_description: "Map changes into shippable concerns"
+  default_prompt: "Use $map-changes to map the current changes before review or shipping."

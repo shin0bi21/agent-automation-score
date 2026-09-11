@@ -1,37 +1,61 @@
 {
-  "name": "repo-automation-score",
+  "name": "agent-insights",
   "version": "0.1.0",
-  "description": "Measure how reliably AI agents can understand, change, and verify a repository.",
+  "description": "Measure how efficiently AI agents execute and verify workflows.",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shin0bi21/agent-insights.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "test": "tsx --test backend/test/agent-benchmark.test.ts",
+    "start": "npm run sessions:check && npm run web",
+    "test": "tsx --test backend/test/*.test.ts",
     "test:web": "vitest run",
     "dry-run": "tsx backend/src/run-agent-benchmark.ts --scenario tasks-page --dry-run",
     "web": "npm run web:build && tsx backend/src/benchmark-web-server.ts",
     "web:dev": "tsx backend/src/benchmark-web-dev.ts",
     "web:build": "vite build",
-    "web:check": "tsc --noEmit",
+    "sessions:check": "tsx backend/src/check-codex-sessions.ts",
+    "tooling:check": "tsc -p tsconfig.json",
+    "check": "npm run validate:skills && npm run validate:docs && npm run tooling:check && npm run backend:check && npm run web:check",
+    "web:check": "tsc -p frontend/tsconfig.json",
     "backend:check": "tsc -p backend/tsconfig.json --noEmit",
-    "backend:build": "tsc -p backend/tsconfig.json"
+    "backend:build": "tsc -p backend/tsconfig.json",
+    "db:migrate": "tsx backend/db/scripts/migrate.ts",
+    "db:status": "tsx backend/db/scripts/migration-status.ts",
+    "db:import-results": "tsx backend/db/scripts/import-results.ts",
+    "db:types": "kysely-codegen --dialect sqlite --out-file backend/src/db/generated.ts",
+    "docker:config": "AGENT_INSIGHTS_REPOSITORY_PATH=/tmp/agent-insights-ci-repository AGENT_INSIGHTS_RUNTIME_PATH=/tmp/agent-insights-ci-runtime AGENT_INSIGHTS_DOCKER_SOCKET_PATH=/dev/null docker compose config --quiet && AGENT_INSIGHTS_REPOSITORY_PATH=/tmp/agent-insights-ci-repository AGENT_INSIGHTS_RUNTIME_PATH=/tmp/agent-insights-ci-runtime AGENT_INSIGHTS_DOCKER_SOCKET_PATH=/var/run/docker.sock docker compose config --quiet",
+    "docker:build": "docker build --tag agent-insights:check .",
+    "validate:skills": "tsx scripts/validate-skills.ts",
+    "validate:docs": "tsx scripts/validate-doc-links.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "5.0.4",
+    "better-sqlite3": "^12.11.1",
+    "express": "^5.2.1",
+    "kysely": "^0.29.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "vite": "7.3.6"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "10.4.1",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.2",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
     "@types/node": "24.3.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "jsdom": "26.1.0",
+    "kysely-codegen": "^0.20.0",
+    "tailwindcss": "^4.3.3",
     "tsx": "4.20.5",
     "typescript": "5.9.2",
     "vitest": "3.2.7"

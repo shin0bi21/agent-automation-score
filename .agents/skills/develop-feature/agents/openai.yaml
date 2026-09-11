@@ -1,4 +1,4 @@
 interface:
   display_name: "Develop Feature"
-  short_description: "Build Repo Automation Score features safely"
-  default_prompt: "Use $develop-feature to add a feature to Repo Automation Score."
+  short_description: "Build Agent Insights features safely"
+  default_prompt: "Use $develop-feature to add, update, fix, or refactor Agent Insights behavior through its canonical contracts."

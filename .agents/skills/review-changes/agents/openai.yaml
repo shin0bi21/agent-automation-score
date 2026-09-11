@@ -1,4 +1,4 @@
 interface:
   display_name: "Review Changes"
   short_description: "Review product changes and score evidence"
-  default_prompt: "Use $review-changes to review the current Repo Automation Score changes."
+  default_prompt: "Use $review-changes to review the current Agent Insights changes."

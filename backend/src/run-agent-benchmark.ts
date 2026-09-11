@@ -5,11 +5,20 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
 import process from 'node:process';
-import { ensureDirectory, parseJsonLines, readJson, runCommand, spawnWithCapture, summarizeEvents, writeJson } from './agent-benchmark-lib.js';
+import {
+  ensureDirectory,
+  parseJsonLines,
+  readJson,
+  runCommand,
+  spawnWithCapture,
+  summarizeEvents,
+  writeJson,
+} from './agent-benchmark-lib.js';
 import { grade } from './grade-agent-benchmark.js';
 
 const HARNESS_ROOT = resolve(import.meta.dirname, '../..');
-const SCENARIOS_ROOT = resolve(HARNESS_ROOT, 'scenarios');
+const BENCHMARKS_ROOT = resolve(HARNESS_ROOT, 'benchmarks');
+const FEATURE_TYPES = ['frontend', 'backend', 'full-stack'];
 
 function usage() {
   console.log(`Usage: npx tsx backend/src/run-agent-benchmark.ts --scenario ID [options]
@@ -20,8 +29,9 @@ Options:
   --reasoning-efforts CSV  Override reasoning levels (for example: low,medium,high).
   --repetitions N       Override repetition count.
   --base-ref REF        Revision shared by every run (default: scenario baseline).
-  --output-dir PATH     Artifact directory (default: results/<timestamp>).
+  --output-dir PATH     Retained diagnostic directory (default: system runtime directory).
   --prompt-file PATH    Override the scenario prompt with a prepared prompt file.
+  --feature-type TYPE   Scope evaluation to frontend, backend, or full-stack.
   --timeout-minutes N   Override per-agent timeout.
   --codex-bin PATH      Codex executable (default: codex).
   --skip-setup          Do not install dependencies before agent execution.
@@ -32,7 +42,13 @@ Options:
 }
 
 export function parseArguments(argv: string[]): any {
-  const options: any = { keepWorktrees: false, skipEvaluation: false, skipSetup: false, dryRun: false, codexBin: process.env.CODEX_BIN ?? 'codex' };
+  const options: any = {
+    keepWorktrees: false,
+    skipEvaluation: false,
+    skipSetup: false,
+    dryRun: false,
+    codexBin: process.env.CODEX_BIN ?? 'codex',
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '-h' || value === '--help') return { help: true };
@@ -50,14 +66,22 @@ export function parseArguments(argv: string[]): any {
     else if (value === '--base-ref') options.baseRef = next;
     else if (value === '--output-dir') options.outputDir = next;
     else if (value === '--prompt-file') options.promptFile = resolve(next);
+    else if (value === '--feature-type') options.featureType = next;
     else if (value === '--timeout-minutes') options.timeoutMinutes = Number(next);
     else if (value === '--codex-bin') options.codexBin = next;
     else throw new Error(`Unknown option ${value}.`);
   }
   if (!options.scenario) throw new Error('--scenario is required.');
   if (!options.repo) throw new Error('--repo is required.');
-  if (options.repetitions !== undefined && (!Number.isInteger(options.repetitions) || options.repetitions < 1)) throw new Error('--repetitions must be a positive integer.');
-  if (options.timeoutMinutes !== undefined && (!Number.isFinite(options.timeoutMinutes) || options.timeoutMinutes <= 0)) throw new Error('--timeout-minutes must be positive.');
+  if (options.featureType !== undefined && !FEATURE_TYPES.includes(options.featureType)) {
+    throw new Error('--feature-type must be frontend, backend, or full-stack.');
+  }
+  if (options.repetitions !== undefined && (!Number.isInteger(options.repetitions) || options.repetitions < 1)) {
+    throw new Error('--repetitions must be a positive integer.');
+  }
+  if (options.timeoutMinutes !== undefined && (!Number.isFinite(options.timeoutMinutes) || options.timeoutMinutes <= 0)) {
+    throw new Error('--timeout-minutes must be positive.');
+  }
   return options;
 }
 
@@ -68,6 +92,33 @@ export function codexArguments({ model, reasoningEffort, worktree, finalPath }) 
     '--approve-for-me', '--cd', worktree,
     '--output-last-message', finalPath, '-',
   ];
+}
+
+export function resolveFeatureType(override, manifestFeatureType) {
+  const featureType = override ?? manifestFeatureType ?? 'full-stack';
+  if (!FEATURE_TYPES.includes(featureType)) throw new Error(`Unsupported scenario feature type: ${String(featureType)}.`);
+  return featureType;
+}
+
+export function dockerComposeIsolationOverride(services: unknown): string {
+  if (!Array.isArray(services) || services.length === 0) {
+    throw new Error('Scenario isolation requires at least one Docker Compose service.');
+  }
+  const normalized = services.map(service => {
+    if (typeof service !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(service)) {
+      throw new Error(`Unsafe Docker Compose service name: ${String(service)}`);
+    }
+    return service;
+  });
+  return [
+    'services:',
+    ...normalized.flatMap(service => [
+      `  ${service}:`,
+      `    container_name: \${BENCHMARK_RUN_ID}_${service}`,
+      '    ports: !reset []',
+    ]),
+    '',
+  ].join('\n');
 }
 
 function git(args, cwd) {
@@ -86,7 +137,7 @@ export function applyGuidanceSnapshot({ repoRoot, worktree, guidance }) {
   }
   // Guidance may introduce canonical documentation paths that the historical
   // product baseline ignored before those paths existed.
-  git(['add', '--force', '--', ...guidance.paths], worktree);
+  git(['add', '--force', '--', ...files], worktree);
   let hasStagedChanges = false;
   try {
     execFileSync('git', ['diff', '--cached', '--quiet'], { cwd: worktree, stdio: 'ignore' });
@@ -137,8 +188,11 @@ export function comparison(results) {
       minimumScore: scores[0] ?? null,
       maximumScore: scores.at(-1) ?? null,
       scoreStdDev: scoreStdDev === null ? null : Math.round(scoreStdDev * 10) / 10,
-      allGatesPassRate: runs.length ? Math.round(1000 * runs.filter(run => run.grade?.failedChecks?.length === 0).length / runs.length) / 10 : 0,
+      allGatesPassRate: runs.length
+        ? Math.round(1000 * runs.filter(run => run.grade?.failedChecks?.length === 0).length / runs.length) / 10
+        : 0,
       missedRequirements,
+      implementationReview: runs[0].grade?.implementationReview ?? null,
       medianDurationMs: median(durations),
       inputTokens: runs.reduce((total, run) => total + run.agent.usage.inputTokens, 0),
       cachedInputTokens: runs.reduce((total, run) => total + run.agent.usage.cachedInputTokens, 0),
@@ -157,7 +211,7 @@ async function executeRun({ repoRoot, baseSha, scenarioPath, manifest, model, re
   const runBaseSha = applyGuidanceSnapshot({ repoRoot, worktree, guidance: manifest.guidance });
   const composeOverride = resolve(worktree, 'logs/benchmark-compose.yml');
   ensureDirectory(resolve(worktree, 'logs'));
-  writeFileSync(composeOverride, readFileSync(resolve(HARNESS_ROOT, 'docker-compose.benchmark.yml'), 'utf8'));
+  writeFileSync(composeOverride, dockerComposeIsolationOverride(manifest.isolation?.dockerComposeServices));
   const composeProject = `agent-benchmark-${safeModel}-run-${repetition}`.toLowerCase().replaceAll(/[^a-z0-9_-]/g, '-');
   const benchmarkEnv = {
     ...process.env,
@@ -221,21 +275,40 @@ async function executeRun({ repoRoot, baseSha, scenarioPath, manifest, model, re
   const changedFiles = [trackedChanges, untrackedChanges].filter(Boolean).join('\n');
   writeFileSync(resolve(runOutput, 'changed-files.txt'), `${changedFiles}\n`);
   git(['add', '-N', '.'], worktree);
-  writeFileSync(resolve(runOutput, 'changes.patch'), execFileSync('git', ['diff', '--binary', '--no-ext-diff', runBaseSha], { cwd: worktree, encoding: 'utf8', maxBuffer: 100 * 1024 * 1024 }));
+  const patch = execFileSync('git', ['diff', '--binary', '--no-ext-diff', runBaseSha], {
+    cwd: worktree,
+    encoding: 'utf8',
+    maxBuffer: 100 * 1024 * 1024,
+  });
+  writeFileSync(resolve(runOutput, 'changes.patch'), patch);
   let gradeResult = null;
   if (!options.skipEvaluation && agent.exitCode === 0 && !agent.timedOut) {
-    gradeResult = grade({ worktree, scenarioPath, baseSha: runBaseSha, env: benchmarkEnv });
+    gradeResult = grade({ worktree, scenarioPath, baseSha: runBaseSha, featureType: options.featureType, env: benchmarkEnv });
     writeJson(resolve(runOutput, 'grade.json'), gradeResult);
   }
   const result = {
-    runId, model, reasoningEffort, repetition, productBaseSha: baseSha, runBaseSha, guidance: manifest.guidance ?? null, worktree,
-    agent: { exitCode: agent.exitCode, durationMs: agent.durationMs, timedOut: agent.timedOut, usage: eventSummary.usage, invalidEventLines: parsed.invalid.length },
+    runId,
+    model,
+    reasoningEffort,
+    repetition,
+    productBaseSha: baseSha,
+    runBaseSha,
+    guidance: manifest.guidance ?? null,
+    worktree,
+    agent: {
+      exitCode: agent.exitCode,
+      durationMs: agent.durationMs,
+      timedOut: agent.timedOut,
+      usage: eventSummary.usage,
+      invalidEventLines: parsed.invalid.length,
+    },
     grade: gradeResult ? {
       earned: gradeResult.earned,
       possible: gradeResult.possible,
       percentage: gradeResult.percentage,
       failedChecks: gradeResult.checks.filter(check => !check.passed).map(check => check.id),
       failedRequirements: gradeResult.requirements.filter(requirement => !requirement.passed).map(requirement => requirement.id),
+      implementationReview: gradeResult.implementationReview,
     } : null,
   };
   writeJson(resolve(runOutput, 'result.json'), result);
@@ -252,7 +325,7 @@ async function executeRun({ repoRoot, baseSha, scenarioPath, manifest, model, re
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) { usage(); return; }
-  const scenarioPath = resolve(SCENARIOS_ROOT, options.scenario);
+  const scenarioPath = resolve(BENCHMARKS_ROOT, options.scenario);
   const manifest = readJson(resolve(scenarioPath, 'manifest.json'));
   if (manifest.id !== options.scenario) throw new Error(`Scenario id mismatch: expected ${options.scenario}.`);
   const models = options.models ?? manifest.models;
@@ -265,11 +338,23 @@ async function main() {
   if (!baseRef) throw new Error('A scenario baseRef or --base-ref is required.');
   const baseSha = git(['rev-parse', `${baseRef}^{commit}`], repoRoot);
   if (manifest.guidance) git(['rev-parse', `${manifest.guidance.ref}^{commit}`], repoRoot);
-  const outputRoot = resolve(options.outputDir ?? resolve(HARNESS_ROOT, 'results', `${manifest.id}-${timestamp()}`));
+  const runtimeRoot = process.env.AGENT_INSIGHTS_RUNTIME_PATH ?? tmpdir();
+  const outputRoot = resolve(options.outputDir ?? resolve(runtimeRoot, `${manifest.id}-benchmark-${timestamp()}`));
   const matrix = models.flatMap(model => reasoningEfforts.flatMap(reasoningEffort => (
     Array.from({ length: repetitions }, (_, index) => ({ model, reasoningEffort, repetition: index + 1 }))
   )));
-  const runPlan = { scenario: manifest.id, repoRoot, baseRef, baseSha, guidance: manifest.guidance ?? null, timeoutMinutes: options.timeoutMinutes, outputRoot, matrix };
+  options.featureType = resolveFeatureType(options.featureType, manifest.featureType);
+  const runPlan = {
+    scenario: manifest.id,
+    featureType: options.featureType,
+    repoRoot,
+    baseRef,
+    baseSha,
+    guidance: manifest.guidance ?? null,
+    timeoutMinutes: options.timeoutMinutes,
+    outputRoot,
+    matrix,
+  };
   if (options.dryRun) { console.log(JSON.stringify(runPlan, null, 2)); return; }
   ensureDirectory(outputRoot);
   writeJson(resolve(outputRoot, 'plan.json'), runPlan);
@@ -285,12 +370,48 @@ async function main() {
   }
   const report = { ...runPlan, results, comparison: comparison(results) };
   writeJson(resolve(outputRoot, 'comparison.json'), report);
-  const lines = ['# Agent benchmark comparison', '', `Scenario: ${manifest.title}`, '', '| Model | Reasoning | Runs | Median | Range | Std dev | All gates | Median duration | Output |', '|---|---|---:|---:|---:|---:|---:|---:|---:|'];
-  for (const row of report.comparison) lines.push(`| ${row.model} | ${row.reasoningEffort} | ${row.successfulRuns}/${row.runs} | ${row.medianScore ?? '—'}% | ${row.minimumScore ?? '—'}–${row.maximumScore ?? '—'}% | ${row.scoreStdDev ?? '—'} | ${row.allGatesPassRate}% | ${row.medianDurationMs ?? '—'} ms | ${row.outputTokens} |`);
+  const lines = [
+    '# Agent benchmark comparison',
+    '',
+    `Scenario: ${manifest.title}`,
+    '',
+    '| Model | Reasoning | Runs | Median | Range | Std dev | All gates | Median duration | Output |',
+    '|---|---|---:|---:|---:|---:|---:|---:|---:|',
+  ];
+  for (const row of report.comparison) {
+    const columns = [
+      row.model,
+      row.reasoningEffort,
+      `${row.successfulRuns}/${row.runs}`,
+      `${row.medianScore ?? '—'}%`,
+      `${row.minimumScore ?? '—'}–${row.maximumScore ?? '—'}%`,
+      row.scoreStdDev ?? '—',
+      `${row.allGatesPassRate}%`,
+      `${row.medianDurationMs ?? '—'} ms`,
+      row.outputTokens,
+    ];
+    lines.push(`| ${columns.join(' | ')} |`);
+  }
   lines.push('', '## Recurring missed contracts', '');
   for (const row of report.comparison) {
-    const misses = Object.entries(row.missedRequirements as Record<string, number>).sort((a, b) => b[1] - a[1]).map(([id, count]) => `${id} (${count}/${row.runs})`).join(', ');
+    const misses = Object.entries(row.missedRequirements as Record<string, number>)
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, count]) => `${id} (${count}/${row.runs})`)
+      .join(', ');
     lines.push(`- ${row.model} / ${row.reasoningEffort}: ${misses || 'none'}`);
+  }
+  lines.push('', '## Implementation review', '');
+  for (const row of report.comparison) {
+    lines.push(`### ${row.model} / ${row.reasoningEffort}`, '');
+    for (const section of row.implementationReview ?? []) {
+      lines.push(`#### ${section.label}`, '', '| Subsection | Status | Agent output | Reference |', '|---|---|---|---|');
+      for (const item of section.items) {
+        lines.push(
+          `| ${item.label} | ${item.implemented ? 'Implemented' : 'Missing'} | ${item.candidateFiles.join('<br>') || '—'} | ${item.referenceFiles.join('<br>') || '—'} |`,
+        );
+      }
+      lines.push('');
+    }
   }
   writeFileSync(resolve(outputRoot, 'comparison.md'), `${lines.join('\n')}\n`);
   console.log(resolve(outputRoot, 'comparison.md'));

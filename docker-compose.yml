@@ -1,0 +1,56 @@
+name: agent-insights
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        CODEX_VERSION: ${CODEX_VERSION:-0.147.0}
+    image: agent-insights:local
+    init: true
+    ports:
+      - "127.0.0.1:${AGENT_INSIGHTS_PORT:-4173}:4173"
+    environment:
+      NODE_ENV: production
+      AGENT_INSIGHTS_HOST: 0.0.0.0
+      AGENT_INSIGHTS_DB_PATH: /data/agent-insights.sqlite
+      BENCHMARK_WEB_PORT: 4173
+      AGENT_INSIGHTS_REPOSITORY_PATH: ${AGENT_INSIGHTS_REPOSITORY_PATH}
+      TMPDIR: ${AGENT_INSIGHTS_RUNTIME_PATH}
+      HOME: /root
+      CODEX_HOME: /root/.codex
+    volumes:
+      - type: volume
+        source: app_data
+        target: /data
+      - type: volume
+        source: codex_state
+        target: /root/.codex
+      - type: bind
+        source: ${AGENT_INSIGHTS_REPOSITORY_PATH}
+        target: ${AGENT_INSIGHTS_REPOSITORY_PATH}
+      - type: bind
+        source: ${AGENT_INSIGHTS_RUNTIME_PATH}
+        target: ${AGENT_INSIGHTS_RUNTIME_PATH}
+      # /dev/null keeps host Docker unavailable by default. Set this to the
+      # daemon socket only for trusted repositories that launch containers.
+      - type: bind
+        source: ${AGENT_INSIGHTS_DOCKER_SOCKET_PATH:-/dev/null}
+        target: /var/run/docker.sock
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:4173/api/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+
+volumes:
+  app_data:
+    name: ${AGENT_INSIGHTS_APP_DATA_VOLUME:-agent-insights_app_data}
+  codex_state:
+    name: ${AGENT_INSIGHTS_CODEX_STATE_VOLUME:-agent-insights_codex_state}

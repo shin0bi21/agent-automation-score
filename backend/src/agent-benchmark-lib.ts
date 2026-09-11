@@ -1,5 +1,13 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 
 export function parseJsonLines(source) {
@@ -34,7 +42,14 @@ export function summarizeEvents(events) {
   return { usage, finalMessage, failed };
 }
 
-export function runCommand(command: string, args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; maxBuffer?: number; timeoutMs?: number } = {}) {
+interface RunCommandOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  maxBuffer?: number;
+  timeoutMs?: number;
+}
+
+export function runCommand(command: string, args: string[], options: RunCommandOptions = {}) {
   const startedAt = Date.now();
   try {
     const stdout = execFileSync(command, args, {
@@ -57,7 +72,11 @@ export function runCommand(command: string, args: string[], options: { cwd?: str
   }
 }
 
-export function spawnWithCapture(command: string, args: string[], { cwd, env, timeoutMs, stdoutPath, stderrPath, input }: any): Promise<any> {
+export function spawnWithCapture(
+  command: string,
+  args: string[],
+  { cwd, env, timeoutMs, stdoutPath, stderrPath, input }: any,
+): Promise<any> {
   return new Promise(resolveRun => {
     const startedAt = Date.now();
     writeFileSync(stdoutPath, '');
@@ -66,9 +85,19 @@ export function spawnWithCapture(command: string, args: string[], { cwd, env, ti
     let stdout = '';
     let stderr = '';
     let timedOut = false;
-    child.stdout.on('data', chunk => { stdout += chunk; appendFileSync(stdoutPath, chunk); });
-    child.stderr.on('data', chunk => { stderr += chunk; appendFileSync(stderrPath, chunk); });
-    child.on('error', error => { const message = `${error.message}\n`; stderr += message; appendFileSync(stderrPath, message); });
+    child.stdout.on('data', chunk => {
+      stdout += chunk;
+      appendFileSync(stdoutPath, chunk);
+    });
+    child.stderr.on('data', chunk => {
+      stderr += chunk;
+      appendFileSync(stderrPath, chunk);
+    });
+    child.on('error', error => {
+      const message = `${error.message}\n`;
+      stderr += message;
+      appendFileSync(stderrPath, message);
+    });
     const terminate = signal => {
       if (!child.pid) return;
       try {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain CI"
+  short_description: "Review and evolve the merge gate safely"
+  default_prompt: "Use $maintain-ci to assess or change Agent Insights CI architecture and verification."

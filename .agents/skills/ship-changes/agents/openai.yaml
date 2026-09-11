@@ -1,4 +1,4 @@
 interface:
   display_name: "Ship Changes"
   short_description: "Ship reviewed changes through GitHub"
-  default_prompt: "Use $ship-changes to ship the approved Repo Automation Score changes."
+  default_prompt: "Use $ship-changes to ship the approved Agent Insights changes."

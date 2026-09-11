@@ -1,8 +1,12 @@
 # Documentation
 
-- [Architecture](architecture.md): system boundaries, providers, repositories, evidence, and desktop packaging.
-- [Development](development/README.md): how to change the product safely.
-- [Features](features/README.md): current product contracts.
-- [Operations](operations/local-development.md): local startup and troubleshooting.
+| Layer | Purpose | Start here |
+|---|---|---|
+| Architecture | System boundaries, ownership, data flow, and durable invariants | [architecture/README.md](architecture/README.md) |
+| Development | Ordered procedures for adding and updating product code | [development/README.md](development/README.md) |
+| Features | Current user-visible behavior and cross-boundary contracts | [features/README.md](features/README.md) |
+| Workflows | Setup, local operation, testing, review, shipping, diagnostics, benchmarks, and CI | [workflows/README.md](workflows/README.md) |
 
-Target repositories are not graded on whether they use this documentation layout. This is Repo Automation Score's own canonical guidance and a dogfooding fixture for its discovery and automation-readiness model.
+Subsystem maps live in [`backend/README.md`](../backend/README.md), [`frontend/README.md`](../frontend/README.md), and [`benchmarks/README.md`](../benchmarks/README.md). Repository-wide automatic agent routing begins in [`AGENTS.md`](../AGENTS.md).
+
+Target repositories are not graded on whether they use this layout. This documentation is Agent Insights's own canonical guidance and a dogfooding fixture for automation-readiness analysis.

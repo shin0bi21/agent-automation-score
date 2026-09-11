@@ -1,0 +1,31 @@
+{
+  "id": "homepage-active-navigation",
+  "version": 1,
+  "title": "Improve homepage active navigation semantics",
+  "featureType": "frontend",
+  "baseRef": "fdb7623e46c88b96f3bef0626b73828af3750095",
+  "referenceRef": "3f484cc82e8a4c3162913ab0d4b8ab8d6ea815aa",
+  "guidance": { "ref": "e66853e2f89520f707057d47f7f938b1d563c596", "paths": ["AGENTS.md", ".agents/skills/develop-feature", "backend/README.md", "docs/architecture", "docs/development", "docs/features", "docs/workflows", "frontend/README.md"] },
+  "promptFile": "prompt.md",
+  "reasoningEfforts": ["low", "medium", "high"],
+  "timeoutMinutes": 30,
+  "evaluationTimeoutMinutes": 15,
+  "isolation": { "dockerComposeServices": ["frontend", "nginx", "backend", "db", "db_test"] },
+  "repetitions": 1,
+  "models": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
+  "checks": [
+    { "id": "diff", "label": "Diff integrity", "points": 10, "command": ["git", "diff", "--check"] },
+    { "id": "patterns", "label": "Repository patterns", "points": 10, "command": ["node", "scripts/agents/check-patterns.js", "--changed", "{baseSha}"] },
+    { "id": "homepage", "label": "Focused homepage tests", "points": 35, "command": ["bash", "scripts/tests/frontend/run-homepage-tests.sh"] },
+    { "id": "build", "label": "Frontend build", "points": 20, "command": ["npm", "--prefix", "frontend", "run", "build"] }
+  ],
+  "requirements": [
+    { "id": "aria-current", "label": "Marks the active section accessibly", "points": 10, "contains": ["aria-current", "page"] },
+    { "id": "focused-tests", "label": "Covers section and root routes", "points": 15, "files": ["frontend/src/pages/HomePage/**/*.test.tsx", "frontend/src/components/**/*TopBar*.test.tsx"] }
+  ],
+  "reviewSections": [{ "id": "frontend", "label": "Frontend implementation", "appliesTo": ["frontend"], "items": [
+    { "id": "top-bar", "label": "Public top bar", "patterns": ["frontend/src/**/*PublicTopBar*.tsx"] },
+    { "id": "routing", "label": "Homepage section routing", "patterns": ["frontend/src/**/*homepageSection*.ts", "frontend/src/**/*homepageSections*.ts"] },
+    { "id": "tests", "label": "Focused DOM tests", "patterns": ["frontend/src/**/*TopBar*.test.tsx", "frontend/src/pages/HomePage/**/*.test.tsx"] }
+  ]}]
+}
