@@ -5,7 +5,10 @@ import { databasePath } from '../db/config.js';
 import type { Database, SessionStatus } from '../db/database.js';
 import { migrate } from '../db/migrator.js';
 import { listCodexStoredSessions, readCodexStoredSession } from './codex-session-source.js';
-import { readCodexLiveSession, readCodexWorkerUsage, type CodexDirectiveSummary, type CodexLiveSessionSnapshot, type CodexOffloadSummary } from './codex-local-session-store.js';
+import { readCodexSessionTelemetry, readCodexWorkerUsage, type CodexDirectiveSummary, type CodexSessionTelemetry, type CodexOffloadSummary } from './codex-local-session-store.js';
+import { buildSessionRepositoryTraversalReport } from './session-path-report.js';
+import type { ObservedRepositoryPathTouch } from './codex-path-observation.js';
+import { normalizeSessionRepositoryPath } from './session-path-traversal.js';
 import { buildSessionUsageTimeline } from './session-usage-timeline.js';
 
 export type SessionWorkerUsage = {
@@ -26,10 +29,11 @@ export type SessionWorkerUsage = {
 type Source = {
   list(): ReturnType<typeof listCodexStoredSessions>;
   read(id: string): ReturnType<typeof readCodexStoredSession>;
-  telemetry?(id: string): Promise<Pick<CodexLiveSessionSnapshot, 'workers' | 'offload' | 'directives'>>;
+  telemetry?(id: string): Promise<Pick<CodexSessionTelemetry, 'workers' | 'offload' | 'directives' | 'pathTouches'>>;
   workers?(id: string): Promise<SessionWorkerUsage[]>;
   offload?(id: string): Promise<CodexOffloadSummary>;
   directives?(id: string): Promise<CodexDirectiveSummary>;
+  pathTouches?(id: string): Promise<ObservedRepositoryPathTouch[]>;
 };
 
 const stableId = (prefix: string, value: string) => `${prefix}-${createHash('sha256').update(value).digest('hex').slice(0, 24)}`;
@@ -82,6 +86,9 @@ async function review(database: Kysely<Database>, id: string) {
       'context_tokens as contextTokens', 'context_window as contextWindow', 'input_tokens as inputTokens',
       'cached_input_tokens as cachedInputTokens', 'output_tokens as outputTokens',
     ])
+    .where('session_id', '=', id).orderBy('sequence_number').execute();
+  const pathTouchRows = await database.selectFrom('session_path_touches')
+    .select(['file_path as path', 'touch_kind as kind', 'occurred_at as occurredAt', 'prompt_key as promptKey'])
     .where('session_id', '=', id).orderBy('sequence_number').execute();
   const directiveSkills = await database.selectFrom('session_episode_skills as skill')
     .innerJoin('session_directive_episodes as episode', 'episode.id', 'skill.episode_id')
@@ -202,13 +209,13 @@ async function review(database: Kysely<Database>, id: string) {
     })),
   } : { available: false, classifierVersion: 2, episodes: [] };
   const { lastObservedAt: _lastObservedAt, ...reviewRow } = row;
-  return { ...reviewRow, evidence: Object.fromEntries(groups.map(group => [group.type, Number(group.count)])), usageAvailable: workers.length > 0, workerUsage: workers, modelUsage: [...byModel.values()], offload, directives, usageTimeline: { available: timelinePoints.length > 0, points: timelinePoints } };
+  return { ...reviewRow, evidence: Object.fromEntries(groups.map(group => [group.type, Number(group.count)])), usageAvailable: workers.length > 0, workerUsage: workers, modelUsage: [...byModel.values()], offload, directives, usageTimeline: { available: timelinePoints.length > 0, points: timelinePoints }, repositoryTraversal: buildSessionRepositoryTraversalReport(pathTouchRows.map(touch => ({ ...touch, promptKey: touch.promptKey ?? undefined }))) };
 }
 
 export function createSessionManager({
   root,
   database,
-  source = { list: listCodexStoredSessions, read: readCodexStoredSession, telemetry: readCodexLiveSession, workers: readCodexWorkerUsage },
+  source = { list: listCodexStoredSessions, read: readCodexStoredSession, telemetry: readCodexSessionTelemetry, workers: readCodexWorkerUsage },
 }: { root: string; database?: Kysely<Database>; source?: Source }) {
   const path = databasePath(root);
   if (!database) migrate({ path });
@@ -228,6 +235,18 @@ export function createSessionManager({
     const workers = telemetry?.workers ?? (source.workers ? await source.workers(externalId) : []);
     const offload = telemetry?.offload ?? (source.offload ? await source.offload(externalId) : null);
     const directives = telemetry?.directives ?? (source.directives ? await source.directives(externalId) : null);
+    const pathTouches = telemetry?.pathTouches ?? (source.pathTouches ? await source.pathTouches(externalId) : []);
+    const normalizedPathTouches = pathTouches.slice(0, 1_000).flatMap(touch => {
+      const path = normalizeSessionRepositoryPath(touch.path);
+      if (!path || path.length > 500 || !['read', 'search', 'change', 'check'].includes(touch.kind) || Number.isNaN(Date.parse(touch.occurredAt)) || !touch.sourceKey.trim()) return [];
+      return [{
+        ...touch,
+        sourceKey: touch.sourceKey.slice(0, 500),
+        promptKey: touch.promptKey?.slice(0, 200) ?? null,
+        path,
+        occurredAt: new Date(touch.occurredAt).toISOString(),
+      }];
+    });
     const id = stableId('session', `codex:${externalId}`);
     const threadId = stableId('thread', `codex:${externalId}`);
     const safeTitle = `Codex session ${externalId.slice(0, 8)}`;
@@ -434,6 +453,19 @@ export function createSessionManager({
           if (episode.discovery.skillsUsed.length) await transaction.insertInto('session_episode_skills').values(episode.discovery.skillsUsed.map(skillName => ({ episode_id: episodeId, skill_name: skillName }))).execute();
           if (episode.preparation.skillsUsed.length) await transaction.insertInto('session_episode_preparation_skills').values(episode.preparation.skillsUsed.map(skillName => ({ episode_id: episodeId, skill_name: skillName }))).execute();
         }
+      }
+      if (telemetry || source.pathTouches) {
+        await transaction.deleteFrom('session_path_touches').where('session_id', '=', id).execute();
+        if (normalizedPathTouches.length) await transaction.insertInto('session_path_touches').values(normalizedPathTouches.map((touch, index) => ({
+          id: stableId('path-touch', `codex:${externalId}:${touch.sourceKey}`),
+          session_id: id,
+          sequence_number: index + 1,
+          source_touch_key: touch.sourceKey,
+          prompt_key: touch.promptKey ?? null,
+          file_path: touch.path,
+          touch_kind: touch.kind,
+          occurred_at: touch.occurredAt,
+        }))).execute();
       }
       if (newEvents.length) await transaction.insertInto('session_events').values(newEvents.map(({ turn, item }) => ({
         id: randomUUID(), session_id: id, thread_id: threadId, turn_id: stableId('turn', `${externalId}:${turn.id}`),

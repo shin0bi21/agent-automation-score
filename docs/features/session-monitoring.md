@@ -14,6 +14,10 @@ The primary dashboard does not present raw tool-call counts or automation-offloa
 
 The Skill routing tree shows observed `AGENTS.md` and `SKILL.md` reads under their prompt boundary, first guidance-read latency, whether discovery preceded the first change, and later content-free change, verification, and delegation totals. A namespaced skill may display its plugin owner. This is routing evidence, not proof of semantic adherence or causation. Exact time spent applying a skill, extracted skill text, and private reasoning are unavailable and are never inferred.
 
+The Repository traversal panel builds a bounded AST-like tree from observed repository-relative path touches. It distinguishes reads, searches, changes, and checks; counts directory visits and file revisits; and preserves ordered up, down, same-directory, and cross-branch movement. Observable event order produces explicitly labelled phases such as pre-change observation, change activity, and check activity. These labels explain the evidence used by the heuristic, not why the agent chose a path or how long it understood the file. Commands, source contents, absolute paths, and private reasoning are not returned or retained. Unsafe paths are discarded. Extraction covers explicit file operands of supported simple shell commands and patch headers; wrappers, compound commands, directories, and dynamic paths are omitted. Collection retains at most 50 files per call and 2,000 touches per worker; imports and analysis retain the first 1,000 touches. Totals describe only retained evidence, coverage limits are visible, and historical sessions without path telemetry remain unavailable rather than zero.
+
+Traversal evidence can reveal high-revisit directories, repeated cross-branch context gathering, and common entry corridors. Those signals may inform later repository point-of-interest indexes, pattern documentation, and scaffolding suggestions, but this version does not automatically redirect an agent or score navigation efficiency.
+
 Process telemetry is diagnostic rather than evaluative. Reading or changing a workflow may require repository context and model judgment, while status polling, log filtering, and reruns may later support a directive-level efficiency finding. No process category currently changes a session score.
 
 Live scores are provisional and must include telemetry coverage. A final score is calculated when the observed session reaches a terminal state. Missing historical telemetry is unknown, never zero. Controlled worktree benchmarks remain a separate Lab workflow for reproducible A/B comparisons.
@@ -39,6 +43,7 @@ The persistence foundation does not yet define live or final scoring. Context he
 - Normalized process schema: `backend/db/migrations/2026-08-21_1_add_session_offload_processes.sql`
 - Directive episode schema: `backend/db/migrations/2026-08-22_1_add_session_directive_episodes.sql`
 - Prompt telemetry snapshots: `backend/db/migrations/2026-08-23_1_add_session_prompt_snapshots.sql`
+- Repository path touches: `backend/db/migrations/2026-08-30_1_add_session_path_touches.sql`
 - Local API boundary: `backend/src/http/app.ts`
 - Session Review: `frontend/src/pages/Sessions/`
 - Connection status: `frontend/src/pages/Settings/`

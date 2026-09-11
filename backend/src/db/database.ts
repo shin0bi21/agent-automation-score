@@ -332,6 +332,17 @@ export interface SessionChangesTable {
   occurred_at: string;
 }
 
+export interface SessionPathTouchesTable {
+  id: string;
+  session_id: string;
+  sequence_number: number;
+  source_touch_key: string;
+  prompt_key: string | null;
+  file_path: string;
+  touch_kind: 'read' | 'search' | 'change' | 'check';
+  occurred_at: string;
+}
+
 export interface SessionOffloadSummariesTable {
   session_id: string;
   measurement: 'exact-live' | 'exact-stored' | 'derived';
@@ -500,6 +511,7 @@ export interface Database {
   session_events: SessionEventsTable;
   session_checks: SessionChecksTable;
   session_changes: SessionChangesTable;
+  session_path_touches: SessionPathTouchesTable;
   session_offload_summaries: SessionOffloadSummariesTable;
   session_offload_processes: SessionOffloadProcessesTable;
   session_interactions: SessionInteractionsTable;

@@ -86,6 +86,12 @@ test('watches normalized Codex usage without starting a turn', async () => {
         { key: 'prompt-1', sequenceNumber: 1, kind: 'directive', status: 'completed', measurement: 'exact-live', startedAt: '2026-08-18T23:50:00.000Z', endedAt: '2026-08-18T23:58:00.000Z', durationMs: 480000, contextTokens: 20, contextWindow: 200, contextPercent: 10, inputTokens: 40, cachedInputTokens: 30, newInputTokens: 10, outputTokens: 8 },
         { key: 'prompt-2', sequenceNumber: 2, kind: 'question', status: 'active', measurement: 'exact-live', startedAt: '2026-08-18T23:58:00.000Z', endedAt: '2026-08-19T00:00:00.000Z', durationMs: 120000, contextTokens: 50, contextWindow: 200, contextPercent: 25, inputTokens: 20, cachedInputTokens: 10, newInputTokens: 10, outputTokens: 4 },
       ] },
+      repositoryTraversal: {
+        available: true, limitation: 'Observed paths do not establish intent.', totalFileHits: 3, uniqueFiles: 2, totalDirectoryVisits: 5,
+        directionCounts: { down: 1, up: 1, cross: 0, same: 0, revisit: 1 }, directoriesTruncated: false, transitionsTruncated: false,
+        directories: [{ id: 'repository:.', path: '', parentId: null, depth: 0, firstVisitOrder: 1, visitCount: 3 }, { id: 'directory:frontend', path: 'frontend', parentId: 'repository:.', depth: 1, firstVisitOrder: 1, visitCount: 2 }],
+        transitions: [{ id: 'one', order: 1, fromPath: 'AGENTS.md', toPath: 'frontend/src/App.tsx', direction: 'down', hitCount: 1, heuristic: { phase: 'pre change observation', reason: 'read before change', basis: ['observable order'], confidence: 'medium' } }],
+      },
       workers: [
         { externalThreadId: 'thread-1234', parentExternalThreadId: null, nickname: null, role: null, model: 'gpt-sol', reasoningLevel: 'low', inputTokens: 80, cachedInputTokens: 40, cacheWriteInputTokens: 0, outputTokens: 20, reasoningOutputTokens: 5, totalTokens: 100, active: true, updatedAt: new Date().toISOString() },
         { externalThreadId: 'thread-old', parentExternalThreadId: 'thread-1234', nickname: 'Historical worker', role: null, model: 'gpt-sol', reasoningLevel: 'medium', inputTokens: 40, cachedInputTokens: 20, cacheWriteInputTokens: 0, outputTokens: 5, reasoningOutputTokens: 1, totalTokens: 45, active: false, updatedAt: '2025-01-01T00:00:00.000Z' },
@@ -125,6 +131,8 @@ test('watches normalized Codex usage without starting a turn', async () => {
   expect(screen.getByText(/Pattern found before editing · 2.4s/)).toBeInTheDocument();
   expect(screen.getByText(/2 changes · 1 verification run/)).toBeInTheDocument();
   expect(screen.getByRole('region', { name: 'Observed skill routing tree' })).toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Directory structure observed during traversal' })).toBeInTheDocument();
+  expect(screen.getByText('File hits').nextElementSibling).toHaveTextContent('3');
   expect(screen.getByText('All observed workers')).toBeInTheDocument();
   expect(screen.getByText('First guidance read after 2.4s · before first change')).toBeInTheDocument();
   expect(screen.getByText('develop-feature')).toBeInTheDocument();

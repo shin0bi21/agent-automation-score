@@ -28,6 +28,7 @@ The database stores repository names and Git revisions, never absolute repositor
 | `session_offload_summaries` | Content-free shell-batch classification and candidate-associated token estimates for frozen reviews |
 | `session_offload_processes` | Privacy-safe normalized process patterns, outcomes, output volume, and quiet-output recommendations |
 | `session_interactions`, `session_directive_episodes`, `session_episode_skills`, `session_episode_preparation_skills` | Content-free prompt telemetry snapshots, change-backed directive metrics, and prior/in-episode skill attribution |
+| `session_path_touches` | Ordered repository-relative read, search, change, and check targets used to derive bounded traversal trees and movement reports |
 | `session_summary` | Durable session watermarks, counts, and latest per-turn usage projection |
 
 Live session state is rendered from memory rather than by polling SQLite after every provider event. Routine evidence is transaction-batched; lifecycle events, idle, shutdown, and terminal transitions flush immediately. `observed_sequence` and `durable_sequence` expose whether a renderer snapshot includes evidence that is not yet committed. Source event keys and sync cursors advance transactionally so reconnect replay cannot duplicate evidence or skip past a failed write.
