@@ -39,8 +39,9 @@ test('SQLite migrations create typed run persistence and summary views', async (
       '2026-08-23_1_add_session_prompt_snapshots',
       '2026-08-28_1_add_benchmark_schedules',
       '2026-08-28_2_add_benchmark_readiness',
+      '2026-08-30_1_add_session_path_touches',
     ]);
-    assert.deepEqual(migrationStatus({ path }).map(item => item.state), ['applied', 'applied', 'applied', 'applied', 'applied', 'applied', 'applied', 'applied', 'applied']);
+    assert.deepEqual(migrationStatus({ path }).map(item => item.state), ['applied', 'applied', 'applied', 'applied', 'applied', 'applied', 'applied', 'applied', 'applied', 'applied']);
 
     const database = createDatabase(path);
     try {

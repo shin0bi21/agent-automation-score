@@ -1,7 +1,9 @@
 import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, resolve, sep } from 'node:path';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import DatabaseDriver from 'better-sqlite3';
+import { extractRepositoryPathTouches, type ObservedRepositoryPathTouch } from './codex-path-observation.js';
+import { buildSessionRepositoryTraversalReport, type SessionRepositoryTraversalReport } from './session-path-report.js';
 import { buildSessionUsageTimeline, type SessionUsageTimelinePoint } from './session-usage-timeline.js';
 
 export type CodexWorkerUsage = {
@@ -127,8 +129,11 @@ export type CodexLiveSessionSnapshot = {
   offload: CodexOffloadSummary;
   directives: CodexDirectiveSummary;
   usageTimeline: { available: boolean; points: SessionUsageTimelinePoint[] };
+  repositoryTraversal: SessionRepositoryTraversalReport;
   workers: CodexWorkerUsage[];
 };
+
+export type CodexSessionTelemetry = CodexLiveSessionSnapshot & { pathTouches: ObservedRepositoryPathTouch[] };
 
 type UsageCounters = {
   inputTokens: number;
@@ -176,6 +181,8 @@ type RolloutState = {
   agentsReads: number;
   interactions: CodexDirectiveSummary['interactions'];
   directiveEpisodes: CodexDirectiveEpisode[];
+  repositoryRoot: string | null;
+  pathTouches: ObservedRepositoryPathTouch[];
   preparation: {
     questions: number;
     context: number;
@@ -208,7 +215,7 @@ const maximumHeuristicInputCharacters = 64 * 1024;
 const maximumRolloutMessageBytes = 1024 * 1024;
 const maximumProcessOutputCharacters = 64 * 1024;
 
-function emptyRolloutState(): RolloutState {
+function emptyRolloutState(repositoryRoot: string | null): RolloutState {
   return {
     usage: null,
     contextWindow: null,
@@ -223,6 +230,8 @@ function emptyRolloutState(): RolloutState {
     agentsReads: 0,
     interactions: [],
     directiveEpisodes: [],
+    repositoryRoot,
+    pathTouches: [],
     preparation: { questions: 0, context: 0, approvals: 0, corrections: 0, agentsReferences: 0, skillReferences: 0, skillsUsed: new Set() },
     lastUsage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, totalTokens: 0 },
     pendingOffloadCandidate: false,
@@ -504,6 +513,29 @@ function applyRolloutMessage(state: RolloutState, line: string) {
       const toolName = String(message?.payload?.name ?? message?.payload?.tool_name ?? '');
       const command = toolCommand(message.payload);
       const episode = activeDirective(state);
+      if (state.repositoryRoot && Number.isFinite(timestamp) && state.pathTouches.length < 2_000) {
+        let commandRoot = state.repositoryRoot;
+        try {
+          const argumentsObject = JSON.parse(boundedToolInput(message.payload));
+          if (typeof argumentsObject.workdir === 'string') commandRoot = resolve(state.repositoryRoot, argumentsObject.workdir);
+          else if (typeof argumentsObject.cwd === 'string') commandRoot = resolve(state.repositoryRoot, argumentsObject.cwd);
+        } catch { /* Raw shell and patch inputs use the rollout working directory. */ }
+        const callKey = typeof message?.payload?.call_id === 'string' ? message.payload.call_id : `tool:${timestamp}:${state.pathTouches.length}`;
+        const touches = extractRepositoryPathTouches({
+          toolName,
+          command,
+          repositoryRoot: commandRoot,
+          occurredAt: new Date(timestamp).toISOString(),
+          promptKey: episode?.openingInteractionKey ?? null,
+          sourceKey: callKey,
+        });
+        state.pathTouches.push(...touches.flatMap(touch => {
+          const absolutePath = resolve(commandRoot, touch.path);
+          const repositoryPath = relative(state.repositoryRoot!, absolutePath).split(sep).join('/');
+          if (repositoryPath === '..' || repositoryPath.startsWith('../') || isAbsolute(repositoryPath)) return [];
+          return [{ ...touch, path: repositoryPath }];
+        }).slice(0, 2_000 - state.pathTouches.length));
+      }
       if (episode && Number.isFinite(timestamp)) {
         episode.execution.toolCalls += 1;
         episode.discovery.agentsReferences += agentsMatches?.length ?? 0;
@@ -621,18 +653,20 @@ function snapshotRollout(state: RolloutState) {
         execution: { ...episode.execution },
       })),
     },
+    pathTouches: state.pathTouches.map(touch => ({ ...touch })),
     offload: { ...state.offload, categories: { ...state.offload.categories }, processPatterns: [...processPatterns.values()] },
   };
 }
 
-async function scanRolloutIncrementally(path: string) {
+async function scanRolloutIncrementally(path: string, repositoryRoot: string | null) {
   const metadata = statSync(path);
   if (!metadata.isFile()) throw new Error('Codex rollout is not a regular file.');
-  let cached = rolloutCache.get(path);
+  const cacheKey = `${path}\0${repositoryRoot ?? ''}`;
+  let cached = rolloutCache.get(cacheKey);
   if (!cached || cached.inode !== metadata.ino || metadata.size < cached.offset) {
     if (metadata.size > maximumInitialRolloutBytes) throw new Error('Codex rollout exceeds the safe initial scan limit.');
-    cached = { inode: metadata.ino, offset: 0, state: emptyRolloutState() };
-    rolloutCache.set(path, cached);
+    cached = { inode: metadata.ino, offset: 0, state: emptyRolloutState(repositoryRoot) };
+    rolloutCache.set(cacheKey, cached);
   }
   if (metadata.size === cached.offset) return snapshotRollout(cached.state);
   let buffer = '';
@@ -654,11 +688,12 @@ async function scanRolloutIncrementally(path: string) {
   return snapshotRollout(cached.state);
 }
 
-async function scanRollout(path: string) {
-  const existing = rolloutScans.get(path);
+async function scanRollout(path: string, repositoryRoot: string | null = null) {
+  const scanKey = `${path}\0${repositoryRoot ?? ''}`;
+  const existing = rolloutScans.get(scanKey);
   if (existing) return existing;
-  const scan = scanRolloutIncrementally(path).finally(() => rolloutScans.delete(path));
-  rolloutScans.set(path, scan);
+  const scan = scanRolloutIncrementally(path, repositoryRoot).finally(() => rolloutScans.delete(scanKey));
+  rolloutScans.set(scanKey, scan);
   return scan;
 }
 
@@ -680,15 +715,16 @@ export async function readCodexWorkerUsage(externalThreadId: string, {
       )
       SELECT threads.id, CASE WHEN threads.id = ? THEN NULL ELSE parent_edge.parent_thread_id END AS parent_id,
         threads.model, threads.reasoning_effort,
-        threads.agent_nickname, threads.agent_role, threads.rollout_path
+        threads.agent_nickname, threads.agent_role, threads.rollout_path, threads.cwd
       FROM worker_ids JOIN threads ON threads.id = worker_ids.id
       LEFT JOIN thread_spawn_edges AS parent_edge ON parent_edge.child_thread_id = threads.id
       ORDER BY CASE WHEN threads.id = ? THEN 0 ELSE 1 END, threads.id
     `).all(externalThreadId, externalThreadId, externalThreadId) as WorkerRow[];
     if (rows.length > 100) throw new Error('Codex session has more workers than the safe monitoring limit.');
+    const repositoryRoot = rows[0]?.cwd ?? null;
     return Promise.all(rows.map(async row => {
       const path = safeRolloutPath(codexHome, row.rollout_path);
-      const scan = await scanRollout(path);
+      const scan = await scanRollout(path, repositoryRoot);
       return {
         externalThreadId: row.id,
         parentExternalThreadId: row.parent_id,
@@ -704,9 +740,9 @@ export async function readCodexWorkerUsage(externalThreadId: string, {
   } finally { sqlite.close(); }
 }
 
-export async function readCodexLiveSession(externalThreadId: string, {
+export async function readCodexSessionTelemetry(externalThreadId: string, {
   codexHome = process.env.CODEX_HOME ?? resolve(homedir(), '.codex'),
-}: { codexHome?: string } = {}): Promise<CodexLiveSessionSnapshot> {
+}: { codexHome?: string } = {}): Promise<CodexSessionTelemetry> {
   if (!/^[a-zA-Z0-9-]{8,100}$/.test(externalThreadId)) throw new Error('Invalid Codex session ID.');
   const statePath = resolve(codexHome, 'state_5.sqlite');
   if (!existsSync(statePath)) throw new Error('Codex local session state is unavailable.');
@@ -728,7 +764,8 @@ export async function readCodexLiveSession(externalThreadId: string, {
     `).all(externalThreadId, externalThreadId, externalThreadId) as WorkerRow[];
     if (!rows.length) throw new Error('Codex session was not found in the local store.');
     if (rows.length > 100) throw new Error('Codex session has more workers than the safe monitoring limit.');
-    const scans = await Promise.all(rows.map(row => scanRollout(safeRolloutPath(codexHome, row.rollout_path))));
+    const repositoryRoot = rows[0].cwd ?? null;
+    const scans = await Promise.all(rows.map(row => scanRollout(safeRolloutPath(codexHome, row.rollout_path), row.cwd ?? repositoryRoot)));
     const workers = rows.map((row, index) => ({
       externalThreadId: row.id,
       parentExternalThreadId: row.parent_id,
@@ -802,6 +839,13 @@ export async function readCodexLiveSession(externalThreadId: string, {
       observedAt,
       live: root.active,
     });
+    const pathTouches = scans.flatMap((scan, index) => scan.pathTouches.flatMap(touch => {
+      if (!repositoryRoot) return [];
+      const path = relative(repositoryRoot, resolve(rows[index].cwd ?? repositoryRoot, touch.path)).split(sep).join('/');
+      if (path === '..' || path.startsWith('../') || isAbsolute(path)) return [];
+      return [{ ...touch, path, sourceKey: `${rows[index].id}:${touch.sourceKey}` }];
+    }))
+      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
     return {
       externalId: externalThreadId,
       title: `Codex session ${externalThreadId.slice(0, 8)}`,
@@ -827,7 +871,14 @@ export async function readCodexLiveSession(externalThreadId: string, {
       offload: normalizedOffload,
       directives: scans[0].directives,
       usageTimeline: { available: usageTimeline.length > 0, points: usageTimeline },
+      repositoryTraversal: buildSessionRepositoryTraversalReport(pathTouches),
+      pathTouches,
       workers,
     };
   } finally { sqlite.close(); }
+}
+
+export async function readCodexLiveSession(externalThreadId: string, options: { codexHome?: string } = {}): Promise<CodexLiveSessionSnapshot> {
+  const { pathTouches: _pathTouches, ...snapshot } = await readCodexSessionTelemetry(externalThreadId, options);
+  return snapshot;
 }

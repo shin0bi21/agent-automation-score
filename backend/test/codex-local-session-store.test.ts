@@ -41,6 +41,9 @@ test('reads bounded per-worker usage without retaining rollout content', async (
   assert.equal(live.contextPercent, 25);
   assert.equal(live.evidence.webSearch, 1);
   assert.equal(live.usageTimeline.available, true);
+  assert.equal(live.repositoryTraversal.available, true);
+  assert.equal(live.repositoryTraversal.totalFileHits, 3);
+  assert.equal(live.repositoryTraversal.uniqueFiles, 3);
   assert.deepEqual(live.usageTimeline.points.map(point => ({ sequence: point.sequenceNumber, status: point.status, input: point.inputTokens, cached: point.cachedInputTokens, output: point.outputTokens })), [
     { sequence: 1, status: 'active', input: 100, cached: 60, output: 20 },
   ]);
@@ -96,6 +99,23 @@ test('reads bounded per-worker usage without retaining rollout content', async (
   cyclic.prepare('INSERT INTO thread_spawn_edges VALUES (?, ?, ?)').run('thread-child', 'thread-parent', 'completed');
   cyclic.close();
   assert.equal((await readCodexWorkerUsage('thread-parent', { codexHome })).length, 2);
+
+  const roots = new DatabaseDriver(join(codexHome, 'state_5.sqlite'));
+  roots.prepare('UPDATE threads SET cwd = ? WHERE id = ?').run('/private/repositories/example/worker', 'thread-child');
+  roots.close();
+  const pathCall = (id: string, cmd: string, workdir?: string) => JSON.stringify({ timestamp: '2026-08-19T00:00:09.000Z', type: 'response_item', payload: { type: 'function_call', name: 'exec_command', call_id: id, arguments: JSON.stringify({ cmd, workdir }) } }) + '\n';
+  appendFileSync(parentRollout, pathCall('nested-read', 'cat local.ts', '/private/repositories/example/src'));
+  appendFileSync(parentRollout, pathCall('external-read', 'cat secret.ts', '/private/other'));
+  appendFileSync(childRollout, pathCall('worker-read', 'cat helper.ts'));
+  const rooted = await readCodexLiveSession('thread-parent', { codexHome });
+  assert.ok(rooted.repositoryTraversal.transitions.some(transition => transition.toPath === 'src/local.ts'));
+  assert.ok(rooted.repositoryTraversal.transitions.some(transition => transition.toPath === 'worker/helper.ts'));
+  assert.equal(JSON.stringify(rooted.repositoryTraversal).includes('secret.ts'), false);
+  const orderedPaths = Array.from({ length: 12 }, (_, index) => `ordered/file-${index + 1}.ts`);
+  appendFileSync(parentRollout, pathCall('ordered-read', `cat ${orderedPaths.join(' ')}`));
+  const ordered = await readCodexLiveSession('thread-parent', { codexHome });
+  assert.deepEqual(ordered.repositoryTraversal.transitions.filter(transition => transition.toPath.startsWith('ordered/')).map(transition => transition.toPath), orderedPaths);
+
 
   writeFileSync(parentRollout, `${usage(2, 1, 1, 0)}\n`);
   const truncated = await readCodexLiveSession('thread-parent', { codexHome });

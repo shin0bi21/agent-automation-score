@@ -3,7 +3,8 @@ import { api } from '../../api';
 import FloatingSelect from '../../common/components/FloatingSelect/FloatingSelect';
 import LoadingSpinner from '../../common/components/LoadingSpinner/LoadingSpinner';
 import SkillRoutingTree from '../../components/SkillRoutingTree/SkillRoutingTree';
-import type { LiveSessionSnapshot, SessionReview, StoredCodexSession } from '../../types';
+import RepositoryTraversal from '../../components/RepositoryTraversal/RepositoryTraversal';
+import type { LiveSessionSnapshot, RepositoryTraversalReport, SessionReview, StoredCodexSession } from '../../types';
 import { eyebrowClass, mutedTextClass, pageTitleClass, panelClass } from '../../ui';
 
 const buttonClass = 'rounded-lg bg-[#6f56d9] px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-60 dark:bg-[#a58cff] dark:text-[#17131f]';
@@ -12,6 +13,7 @@ const number = new Intl.NumberFormat();
 const compactNumber = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 type WorkerRange = 'active' | 'today' | 'week' | 'month' | 'all';
 type SessionRange = 'five' | 'hour' | 'day' | 'week' | 'month' | 'all';
+const unavailableRepositoryTraversal: RepositoryTraversalReport = { available: false, limitation: 'Historical path touches were not retained for this review.', totalFileHits: 0, uniqueFiles: 0, totalDirectoryVisits: 0, directionCounts: { down: 0, up: 0, cross: 0, same: 0, revisit: 0 }, directories: [], transitions: [], directoriesTruncated: false, transitionsTruncated: false };
 
 function startOfDay(date = new Date()) { const value = new Date(date); value.setHours(0, 0, 0, 0); return value; }
 function workerInRange(worker: LiveSessionSnapshot['workers'][number], range: WorkerRange, now = new Date()) {
@@ -76,6 +78,7 @@ function reviewSnapshot(review: SessionReview): LiveSessionSnapshot {
     offload: review.offload ?? { available: false, shellBatches: 0, candidateBatches: 0, associatedInputTokens: 0, associatedCachedInputTokens: 0, associatedOutputTokens: 0, associatedTotalTokens: 0, categories: { verification: 0, build: 0, formatting: 0, script: 0, monitoring: 0 }, processPatterns: [] },
     directives: review.directives ?? { available: false, classifierVersion: 2, episodes: [] },
     usageTimeline: review.usageTimeline ?? { available: false, points: [] },
+    repositoryTraversal: review.repositoryTraversal ?? unavailableRepositoryTraversal,
     workers: review.workerUsage.map(worker => ({
       externalThreadId: worker.id,
       parentExternalThreadId: worker.role === 'orchestrator' ? null : 'subagent',
@@ -277,6 +280,7 @@ export default function Live({ embedded = false }: { embedded?: boolean }) {
           </div> : <div className="mt-3 rounded-xl border border-dashed border-[#c8c1df] p-5 text-sm dark:border-[#4d455e]"><strong>Waiting for prompt activity</strong><p className={`mt-2 ${mutedTextClass}`}>Token movement appears after a privacy-safe prompt boundary is observed.</p></div>}
         </section>
         <section className={`${panelClass} mt-6 p-6`}><h3>Skill routing</h3><p className={`mt-1 text-xs ${mutedTextClass}`}>Observed guidance reads by prompt. Downstream activity is correlated, not proof that a skill caused the work; skill contents and private reasoning are not retained.</p><SkillRoutingTree guidance={snapshot.guidance} directives={snapshot.directives} /></section>
+        <section className={`${panelClass} mt-6 p-6`}><RepositoryTraversal report={snapshot.repositoryTraversal ?? unavailableRepositoryTraversal} /></section>
         <div className="mt-6 grid grid-cols-[.8fr_1.2fr] gap-6 max-[850px]:grid-cols-1">
           <section className={`${panelClass} p-6`}><h3>Technical activity</h3><p className={`mt-1 text-xs ${mutedTextClass}`}>Diagnostic session totals; expand change-backed prompts above for evaluative detail.</p><div className="mt-4 grid grid-cols-2 gap-3">{[['File changes', snapshot.evidence.fileChange ?? 0], ['Web searches', snapshot.evidence.webSearch ?? 0], ['Delegations', snapshot.evidence.delegation ?? 0], ['Compactions', snapshot.evidence.contextCompaction ?? 0]].map(([label, value]) => <div className="rounded-xl border border-[#dedbea] p-4 dark:border-[#373241]" key={label}><strong className="block text-xl">{value}</strong><span className={`text-xs ${mutedTextClass}`}>{label}</span></div>)}</div></section>
           <section className={`${panelClass} p-6`}>

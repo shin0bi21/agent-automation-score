@@ -51,6 +51,27 @@ export interface StoredCodexSession {
   revision: string | null;
 }
 
+export interface RepositoryTraversalReport {
+  available: boolean;
+  limitation: string | null;
+  totalFileHits: number;
+  uniqueFiles: number;
+  totalDirectoryVisits: number;
+  directionCounts: Record<'down' | 'up' | 'cross' | 'same' | 'revisit', number>;
+  directories: Array<{ id: string; path: string; parentId: string | null; depth: number; firstVisitOrder: number; visitCount: number }>;
+  transitions: Array<{
+    id: string;
+    order: number;
+    fromPath: string | null;
+    toPath: string;
+    direction: 'entry' | 'down' | 'up' | 'cross' | 'same' | 'revisit';
+    hitCount: number;
+    heuristic: { phase: string | null; reason: string | null; basis: string[]; confidence: 'low' | 'medium' | 'high' } | null;
+  }>;
+  directoriesTruncated: boolean;
+  transitionsTruncated: boolean;
+}
+
 export interface LiveSessionSnapshot {
   externalId: string;
   title: string;
@@ -105,6 +126,7 @@ export interface LiveSessionSnapshot {
   };
   directives: DirectiveSummary;
   usageTimeline: UsageTimeline;
+  repositoryTraversal: RepositoryTraversalReport;
   workers: LiveWorkerTokenUsage[];
 }
 
@@ -201,6 +223,7 @@ export interface SessionReview {
   platform: string;
   externalSessionId: string;
   usageTimeline: UsageTimeline;
+  repositoryTraversal: RepositoryTraversalReport;
   repositoryName: string | null;
   evidence: Record<string, number>;
   offload: LiveSessionSnapshot['offload'];
